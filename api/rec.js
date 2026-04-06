@@ -1,5 +1,5 @@
 export default async function handler(req, res) {
-    const { vid } = req.query;
+    const vid = req.query.vid;
 
     if (!vid) {
         return res.status(400).json({ error: "Missing 'vid' parameter. Use /api/rec?vid=..." });
@@ -14,14 +14,14 @@ export default async function handler(req, res) {
             return res.status(404).json({ error: "No recommendations found." });
         }
 
-        // 2. Process all songs concurrently to save time
+        // 2. Process all songs concurrently to handle the 5-40s latency efficiently
         const enrichedRecommendations = await Promise.all(
             recomData.recommendations.map(async (song) => {
-                const title = song.Title;
-                const artistsStr = song.Artists || "";
+                const title = song.Title || "";
+                const artist = song.Artists || "";
                 
-                // Get main artist for the search query
-                const searchArtist = artistsStr ? artistsStr.split(',').slice(0, 2).join(' ') : "";
+                // Keep the search query clean (First 2 artists max to improve search results)
+                const searchArtist = artist ? artist.split(',').slice(0, 2).join(' ') : "";
                 const query = `${title} ${searchArtist}`.trim();
 
                 let spotifyUrl = "Not Found";
@@ -29,20 +29,23 @@ export default async function handler(req, res) {
                 try {
                     // Fetch from your custom Spotify API
                     const spotRes = await fetch(`https://ayushspot.vercel.app/api?query=${encodeURIComponent(query)}`);
+                    
                     if (spotRes.ok) {
                         const spotData = await spotRes.json();
                         
-                        // Exact match logic from your HTML file
-                        const match = performMatching(spotData, title, artistsStr);
+                        // Pass to our custom matching function
+                        const match = performMatching(spotData, title, artist);
                         
-                        if (match && match.id) {
-                            spotifyUrl = `https://open.spotify.com/track/${match.id}`;
+                        // If match is found, extract the direct song_link
+                        if (match && match.song_link) {
+                            spotifyUrl = match.song_link;
                         }
                     }
                 } catch (e) {
                     console.error(`Spotify Search Failed for: ${title}`);
                 }
 
+                // Return in your exact requested format
                 return {
                     Title: song.Title,
                     Artists: song.Artists,
@@ -62,15 +65,14 @@ export default async function handler(req, res) {
     }
 }
 
-// Exactly extracted and adapted matching technique
+// ==========================================
+// EXACT MATCHING LOGIC UPDATED FOR NEW API
+// ==========================================
 function performMatching(apiData, targetTrack, targetArtist) {
-    // Determine array path (handles standard Spotify OR RapidAPI formats safely)
-    let trackList = [];
-    if (apiData.tracks && apiData.tracks.items) trackList = apiData.tracks.items; 
-    else if (apiData.tracks && Array.isArray(apiData.tracks)) trackList = apiData.tracks;
-    else if (Array.isArray(apiData)) trackList = apiData;
-
-    if (trackList.length === 0) return null;
+    // Safety check for the specific structure of ayushspot API
+    if (!apiData || apiData.status !== "success" || !apiData.data || !Array.isArray(apiData.data)) {
+        return null;
+    }
     
     const clean = (s) => (s || "").toLowerCase().replace(/[^\w\s]|_/g, "").replace(/\s+/g, " ").trim();
     const tTitle = clean(targetTrack); 
@@ -79,28 +81,32 @@ function performMatching(apiData, targetTrack, targetArtist) {
     let bestMatch = null; 
     let highestScore = 0;
     
-    trackList.forEach(item => {
-        // Standardize format differences
-        const track = item.data ? item.data : item; 
-        if (!track) return;
+    // Using a standard loop to prevent execution cut-offs
+    for (let i = 0; i < apiData.data.length; i++) {
+        const track = apiData.data[i];
+        if (!track) continue;
         
-        const rTitle = clean(track.name); 
+        const rTitle = clean(track.title); 
+        const rawArtist = track.artist_names || "";
         
-        // Extract artists safely
-        let rArtists = [];
-        if (track.artists && track.artists.items) {
-            rArtists = track.artists.items.map(a => clean(a.profile ? a.profile.name : a.name));
-        } else if (track.artists && Array.isArray(track.artists)) {
-            rArtists = track.artists.map(a => clean(a.name));
-        }
+        // Extract artists from comma-separated string
+        const rArtists = rawArtist.split(',').map(a => clean(a));
         
         let score = 0; 
         let artistMatched = false;
         
         if (tArtist.length > 0) {
-            for (let ra of rArtists) { 
-                if (ra === tArtist) { score += 100; artistMatched = true; break; } 
-                else if (ra.includes(tArtist) || tArtist.includes(ra)) { score += 80; artistMatched = true; break; } 
+            for (let j = 0; j < rArtists.length; j++) { 
+                let ra = rArtists[j];
+                if (ra === tArtist) { 
+                    score += 100; 
+                    artistMatched = true; 
+                    break; 
+                } else if (ra.includes(tArtist) || tArtist.includes(ra)) { 
+                    score += 80; 
+                    artistMatched = true; 
+                    break; 
+                } 
             }
             if (!artistMatched) score = 0;
         } else { 
@@ -117,7 +123,7 @@ function performMatching(apiData, targetTrack, targetArtist) {
             highestScore = score; 
             bestMatch = track; 
         }
-    });
+    }
     
     return highestScore > 0 ? bestMatch : null;
 }
