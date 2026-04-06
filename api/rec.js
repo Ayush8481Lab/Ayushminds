@@ -1,4 +1,24 @@
 export default async function handler(req, res) {
+    // ==========================================
+    // ENABLE CORS (Cross-Origin Resource Sharing)
+    // ==========================================
+    res.setHeader('Access-Control-Allow-Credentials', true);
+    res.setHeader('Access-Control-Allow-Origin', '*'); // Allows all websites/apps
+    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
+    res.setHeader(
+        'Access-Control-Allow-Headers',
+        'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+    );
+
+    // Handle preflight request for browsers
+    if (req.method === 'OPTIONS') {
+        res.status(200).end();
+        return;
+    }
+
+    // ==========================================
+    // MAIN API LOGIC (Strictly untouched)
+    // ==========================================
     const vid = req.query.vid;
 
     if (!vid) {
@@ -66,7 +86,7 @@ export default async function handler(req, res) {
 }
 
 // ==========================================
-// EXACT MATCHING LOGIC UPDATED FOR NEW API
+// EXACT MATCHING LOGIC
 // ==========================================
 function performMatching(apiData, targetTrack, targetArtist) {
     // Safety check for the specific structure of ayushspot API
